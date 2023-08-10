@@ -25,9 +25,10 @@ use crate::kv_option::{Options, INDEX_PATH};
 use crate::memcache::{RowData, RowGroup};
 use crate::schema::schemas::DBschemas;
 use crate::summary::{SummaryTask, VersionEdit};
-use crate::tseries_family::{LevelInfo, TseriesFamily, TsfFactory, Version};
-use crate::Error::{self};
-use crate::{file_utils, ColumnFileId, TseriesFamilyId};
+use crate::tseries_family::{
+    schedule_vnode_compaction, LevelInfo, TseriesFamily, TsfFactory, Version,
+};
+use crate::{file_utils, ColumnFileId, Error, TseriesFamilyId};
 
 pub type FlatBufferTable<'a> = flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Table<'a>>>;
 
@@ -36,6 +37,7 @@ pub struct Database {
     //tenant_name.database_name => owner
     owner: Arc<String>,
     opt: Arc<Options>,
+    runtime: Arc<Runtime>,
 
     schemas: Arc<DBschemas>,
     ts_indexes: HashMap<TseriesFamilyId, Arc<index::ts_index::TSIndex>>,
@@ -49,6 +51,7 @@ pub struct DatabaseFactory {
     memory_pool: MemoryPoolRef,
     metrics_register: Arc<MetricsRegister>,
     opt: Arc<Options>,
+    runtime: Arc<Runtime>,
 }
 
 impl DatabaseFactory {
@@ -57,12 +60,14 @@ impl DatabaseFactory {
         memory_pool: MemoryPoolRef,
         metrics_register: Arc<MetricsRegister>,
         opt: Arc<Options>,
+        runtime: Arc<Runtime>,
     ) -> Self {
         Self {
             meta,
             memory_pool,
             metrics_register,
             opt,
+            runtime,
         }
     }
 
@@ -70,6 +75,7 @@ impl DatabaseFactory {
         Database::new(
             schema,
             self.opt.clone(),
+            self.runtime.clone(),
             self.meta.clone(),
             self.memory_pool.clone(),
             self.metrics_register.clone(),
@@ -82,6 +88,7 @@ impl Database {
     pub async fn new(
         schema: DatabaseSchema,
         opt: Arc<Options>,
+        runtime: Arc<Runtime>,
         meta: MetaRef,
         memory_pool: MemoryPoolRef,
         metrics_register: Arc<MetricsRegister>,
@@ -96,6 +103,7 @@ impl Database {
 
         let db = Self {
             opt,
+            runtime,
             owner: Arc::new(schema.owner()),
             schemas: Arc::new(DBschemas::new(schema, meta).await.context(SchemaSnafu)?),
             ts_indexes: HashMap::new(),
@@ -117,9 +125,11 @@ impl Database {
         let tf =
             self.tsf_factory
                 .create_tsf(tf_id, ver.clone(), flush_task_sender, compact_task_sender);
-        tf.schedule_compaction(runtime);
-        self.ts_families
-            .insert(ver.tf_id(), Arc::new(RwLock::new(tf)));
+
+        let tf_ref = Arc::new(RwLock::new(tf));
+        schedule_vnode_compaction(runtime, tf_ref.clone());
+
+        self.ts_families.insert(ver.tf_id(), tf_ref);
     }
 
     // todo: Maybe TseriesFamily::new() should be refactored.
@@ -564,6 +574,17 @@ impl Database {
 impl Database {
     pub fn tsf_num(&self) -> usize {
         self.ts_families.len()
+    }
+}
+
+impl Drop for Database {
+    fn drop(&mut self) {
+        let vnodes: Vec<Arc<RwLock<TseriesFamily>>> = self.ts_families.values().cloned().collect();
+        self.runtime.spawn(async move {
+            for vnode in vnodes {
+                vnode.write().await.close();
+            }
+        });
     }
 }
 
