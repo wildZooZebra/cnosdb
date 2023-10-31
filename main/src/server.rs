@@ -127,7 +127,7 @@ async fn regular_report_node_metrics(meta: MetaRef, heartbeat_interval: u64) {
     }
 }
 
-fn build_default_address(port: u16) -> String {
+fn build_default_address(port: Option<u16>) -> String {
     build_address(DEFAULT_NODE_IP.to_owned(), port)
 }
 
@@ -148,19 +148,28 @@ impl ServiceBuilder {
         let dbms = self
             .create_dbms(coord.clone(), self.memory_pool.clone())
             .await;
-        let http_service =
-            Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Store));
-        let grpc_service = Box::new(self.create_grpc(kv_inst.clone(), coord.clone()));
+
+        if let Some(_port) = self.config.cluster.http_listen_port {
+            let http_service =
+                Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Store));
+            server.add_service(http_service);
+        }
+
+        if let Some(_port) = self.config.cluster.grpc_listen_port {
+            let grpc_service = Box::new(self.create_grpc(kv_inst.clone(), coord.clone()));
+            server.add_service(grpc_service);
+        }
+
+        if let Some(_port) = self.config.cluster.tcp_listen_port {
+            let tcp_service = Box::new(self.create_tcp(coord.clone()));
+            server.add_service(tcp_service);
+        }
+
         if let Some(port) = self.config.cluster.vector_listen_port {
             let vector_service =
                 Box::new(self.create_vector_grpc(coord.clone(), dbms.clone(), port));
             server.add_service(vector_service);
         }
-        let tcp_service = Box::new(self.create_tcp(coord.clone()));
-
-        server.add_service(http_service);
-        server.add_service(grpc_service);
-        server.add_service(tcp_service);
 
         Some(kv_inst)
     }
@@ -171,12 +180,17 @@ impl ServiceBuilder {
         let dbms = self
             .create_dbms(coord.clone(), self.memory_pool.clone())
             .await;
-        let http_service =
-            Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Query));
-        let flight_sql_service = Box::new(self.create_flight_sql(dbms.clone()));
 
-        server.add_service(http_service);
-        server.add_service(flight_sql_service);
+        if let Some(_port) = self.config.cluster.http_listen_port {
+            let http_service =
+                Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Query));
+            server.add_service(http_service);
+        }
+
+        if let Some(_port) = self.config.cluster.flight_rpc_listen_port {
+            let flight_sql_service = Box::new(self.create_flight_sql(dbms.clone()));
+            server.add_service(flight_sql_service);
+        }
 
         None
     }
@@ -197,21 +211,33 @@ impl ServiceBuilder {
         let dbms = self
             .create_dbms(coord.clone(), self.memory_pool.clone())
             .await;
-        let flight_sql_service = Box::new(self.create_flight_sql(dbms.clone()));
-        let grpc_service = Box::new(self.create_grpc(kv_inst.clone(), coord.clone()));
+
+        if let Some(_port) = self.config.cluster.http_listen_port {
+            let http_service =
+                Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Bundle));
+            server.add_service(http_service);
+        }
+
+        if let Some(_port) = self.config.cluster.grpc_listen_port {
+            let grpc_service = Box::new(self.create_grpc(kv_inst.clone(), coord.clone()));
+            server.add_service(grpc_service);
+        }
+
+        if let Some(_port) = self.config.cluster.flight_rpc_listen_port {
+            let flight_sql_service = Box::new(self.create_flight_sql(dbms.clone()));
+            server.add_service(flight_sql_service);
+        }
+
+        if let Some(_port) = self.config.cluster.tcp_listen_port {
+            let tcp_service = Box::new(self.create_tcp(coord.clone()));
+            server.add_service(tcp_service);
+        }
+
         if let Some(port) = self.config.cluster.vector_listen_port {
             let vector_service =
                 Box::new(self.create_vector_grpc(coord.clone(), dbms.clone(), port));
             server.add_service(vector_service);
         }
-        let http_service =
-            Box::new(self.create_http(dbms.clone(), coord.clone(), ServerMode::Bundle));
-        let tcp_service = Box::new(self.create_tcp(coord.clone()));
-
-        server.add_service(http_service);
-        server.add_service(grpc_service);
-        server.add_service(flight_sql_service);
-        server.add_service(tcp_service);
 
         Some(kv_inst)
     }
@@ -345,7 +371,7 @@ impl ServiceBuilder {
         dbms: DBMSRef,
         port: u16,
     ) -> VectorGrpcService {
-        let default_vector_grpc_addr = build_default_address(port);
+        let default_vector_grpc_addr = build_default_address(Some(port));
 
         let addr = default_vector_grpc_addr
             .to_socket_addrs()
