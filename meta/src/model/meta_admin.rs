@@ -47,6 +47,8 @@ struct UseTenantInfo {
 #[derive(Debug)]
 pub struct AdminMeta {
     config: Config,
+    /// Is config.cluster.grpc_listen_port a Some(_).
+    enabled: bool,
     client: MetaHttpClient,
 
     watch_version: AtomicU64,
@@ -66,11 +68,13 @@ impl AdminMeta {
         let (watch_notify, _) = mpsc::channel(1024);
         let client = MetaHttpClient::new("");
         let config = Config::default();
+        let enabled = config.cluster.grpc_listen_port.is_some();
 
         let limiters = LimiterManager::new(HashMap::new());
 
         Self {
             config,
+            enabled,
             watch_notify,
             client,
             users: RwLock::new(HashMap::new()),
@@ -85,6 +89,7 @@ impl AdminMeta {
     }
 
     pub async fn new(config: Config) -> Arc<Self> {
+        let enabled = config.cluster.grpc_listen_port.is_some();
         let meta_service_addr = config.cluster.meta_service_addr.clone();
         let meta_url = meta_service_addr.join(";");
         let (watch_notify, receiver) = mpsc::channel(1024);
@@ -104,6 +109,7 @@ impl AdminMeta {
 
         let admin = Arc::new(Self {
             config,
+            enabled,
             watch_notify,
             client,
             users: RwLock::new(HashMap::new()),
@@ -121,6 +127,10 @@ impl AdminMeta {
         tokio::spawn(AdminMeta::watch_task_manager(admin.clone(), receiver));
 
         admin
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
     }
 
     fn cluster(&self) -> String {
@@ -404,6 +414,15 @@ impl AdminMeta {
 
     /******************** Data Node Operation Begin *********************/
     pub async fn add_data_node(&self) -> MetaResult<()> {
+        let grpc_addr = match self.config.cluster.grpc_listen_port {
+            Some(port) => build_address(&self.config.host, port),
+            None => {
+                return Err(MetaError::InvalidInitialConfig {
+                    msg: "grpc_listen_port is not set".to_string(),
+                })
+            }
+        };
+
         let mut attribute = NodeAttribute::default();
         if self.config.node_basic.cold_data_server {
             attribute = NodeAttribute::Cold;
@@ -412,14 +431,7 @@ impl AdminMeta {
         let node = NodeInfo {
             attribute,
             id: self.config.node_basic.node_id,
-            grpc_addr: build_address(
-                self.config.host.clone(),
-                self.config.cluster.grpc_listen_port,
-            ),
-            http_addr: build_address(
-                self.config.host.clone(),
-                self.config.cluster.http_listen_port,
-            ),
+            grpc_addr,
         };
 
         let cluster_name = self.config.cluster.name.clone();

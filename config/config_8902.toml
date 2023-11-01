@@ -61,10 +61,10 @@ name = 'cluster_xxx'
 meta_service_addr = ["127.0.0.1:8901"]
 
 http_listen_port = 8902
-grpc_listen_port = 8903
-flight_rpc_listen_port = 8904
-tcp_listen_port = 8905
-vector_listen_port = 8906
+# grpc_listen_port = 8903
+# flight_rpc_listen_port = 8904
+# tcp_listen_port = 8905
+# vector_listen_port = 8906
 
 [node_basic]
 node_id = 1001

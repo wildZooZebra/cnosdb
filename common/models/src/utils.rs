@@ -99,9 +99,6 @@ impl SeqIdGenerator {
     }
 }
 
-pub fn build_address(address: String, port: Option<u16>) -> String {
-    match port {
-        Some(port) => format!("{}:{}", address, port),
-        None => String::new(),
-    }
+pub fn build_address(address: &str, port: u16) -> String {
+    format!("{address}:{port}")
 }
